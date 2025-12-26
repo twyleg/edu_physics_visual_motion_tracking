@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 function App() {
@@ -6,8 +6,12 @@ function App() {
   const canvasRef = useRef(null)
   const resultsRef = useRef([])
   const detectedPointsRef = useRef([])
+  const manualMarkersRef = useRef([])
   const processingRef = useRef(false)
   const dragTargetRef = useRef(null)
+  const savedLineAppliedRef = useRef(false)
+  const magnifierRef = useRef(null)
+  const savedScaleAppliedRef = useRef(false)
   const [videoUrl, setVideoUrl] = useState('')
   const [videoName, setVideoName] = useState('')
   const [videoReady, setVideoReady] = useState(false)
@@ -25,6 +29,8 @@ function App() {
   const [results, setResults] = useState([])
   const [logs, setLogs] = useState([])
   const [frameStepSeconds, setFrameStepSeconds] = useState(1 / 30)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [hoverPoint, setHoverPoint] = useState(null)
 
   const lineLength = useMemo(() => {
     if (!startPoint || !endPoint) return 0
@@ -39,17 +45,42 @@ function App() {
 
   useEffect(() => {
     if (!videoReady) return
-    drawFrame()
+    const handle = requestAnimationFrame(() => drawFrame())
+    return () => cancelAnimationFrame(handle)
   }, [videoReady, startPoint, endPoint])
+
+  useEffect(() => {
+    if (status !== 'manual') return
+    const handleKey = (event) => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        stepFrame(1)
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        stepFrame(-1)
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [status, frameStepSeconds])
 
   const drawFrame = () => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return
+    if (video.readyState < 2) {
+      requestAnimationFrame(() => drawFrame())
+      return
+    }
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     drawOverlay(ctx)
+  }
+
+  const getFrameKey = (time) => {
+    const step = frameStepSeconds || 1 / 30
+    return Number((Math.round(time / step) * step).toFixed(4))
   }
 
   const drawOverlay = (ctx) => {
@@ -96,6 +127,23 @@ function App() {
         drawOrthogonal(endPoint)
       }
     }
+    if (status === 'manual' && hoverPoint && startPoint && endPoint) {
+      const dx = endPoint.x - startPoint.x
+      const dy = endPoint.y - startPoint.y
+      const length = Math.hypot(dx, dy)
+      if (length > 0) {
+        const nx = -dy / length
+        const ny = dx / length
+        const extent = Math.max(ctx.canvas.width, ctx.canvas.height)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([4, 6])
+        ctx.beginPath()
+        ctx.moveTo(hoverPoint.x - nx * extent, hoverPoint.y - ny * extent)
+        ctx.lineTo(hoverPoint.x + nx * extent, hoverPoint.y + ny * extent)
+        ctx.stroke()
+      }
+    }
     if (detectedPointsRef.current.length) {
       ctx.fillStyle = 'rgba(245, 245, 245, 0.85)'
       detectedPointsRef.current.forEach((point) => {
@@ -104,13 +152,119 @@ function App() {
         ctx.fill()
       })
     }
+    if (manualMarkersRef.current.length) {
+      const currentKey = getFrameKey(currentTime)
+      manualMarkersRef.current.forEach((point) => {
+        const isCurrent = Math.abs(point.time - currentKey) < 0.0006
+        ctx.fillStyle = isCurrent ? 'rgba(220, 38, 38, 0.95)' : 'rgba(245, 245, 245, 0.95)'
+        ctx.beginPath()
+        ctx.arc(point.x, point.y, isCurrent ? 5 : 4, 0, Math.PI * 2)
+        ctx.fill()
+      })
+    }
+    if (status === 'manual' && hoverPoint) {
+      const zoom = 3
+      const size = 90
+      const sampleSize = Math.round(size / zoom)
+      const sx = Math.max(0, Math.min(ctx.canvas.width - sampleSize, hoverPoint.x - sampleSize / 2))
+      const sy = Math.max(0, Math.min(ctx.canvas.height - sampleSize, hoverPoint.y - sampleSize / 2))
+      let mx = hoverPoint.x + 18
+      let my = hoverPoint.y + 18
+      if (mx + size > ctx.canvas.width) mx = hoverPoint.x - size - 18
+      if (my + size > ctx.canvas.height) my = hoverPoint.y - size - 18
+      if (mx < 0) mx = 10
+      if (my < 0) my = 10
+      try {
+        if (!magnifierRef.current) {
+          magnifierRef.current = document.createElement('canvas')
+        }
+        const magCanvas = magnifierRef.current
+        magCanvas.width = sampleSize
+        magCanvas.height = sampleSize
+        const magCtx = magCanvas.getContext('2d')
+        const imageData = ctx.getImageData(sx, sy, sampleSize, sampleSize)
+        magCtx.putImageData(imageData, 0, 0)
+        ctx.save()
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'
+        ctx.fillRect(mx - 4, my - 4, size + 8, size + 8)
+        ctx.drawImage(magCanvas, mx, my, size, size)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+        ctx.lineWidth = 1
+        ctx.strokeRect(mx, my, size, size)
+        ctx.beginPath()
+        ctx.moveTo(mx + size / 2, my)
+        ctx.lineTo(mx + size / 2, my + size)
+        ctx.moveTo(mx, my + size / 2)
+        ctx.lineTo(mx + size, my + size / 2)
+        ctx.stroke()
+        ctx.restore()
+      } catch (error) {
+        // Ignore magnifier errors (e.g., tainted canvas).
+      }
+    }
     ctx.restore()
   }
 
-  const addLog = (message) => {
+  const addLog = useCallback((message) => {
     const timestamp = new Date().toLocaleTimeString()
     setLogs((prev) => [...prev.slice(-199), `${timestamp} · ${message}`])
+  }, [])
+
+  const setCookie = (name, value, days = 365) => {
+    const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString()
+    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`
   }
+
+  const getCookie = (name) => {
+    const prefix = `${name}=`
+    const entries = document.cookie.split('; ')
+    const match = entries.find((entry) => entry.startsWith(prefix))
+    return match ? decodeURIComponent(match.slice(prefix.length)) : ''
+  }
+
+  const clearCookie = (name) => {
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+  }
+
+  useEffect(() => {
+    if (!startPoint || !endPoint) return
+    if (![startPoint.x, startPoint.y, endPoint.x, endPoint.y].every(Number.isFinite)) return
+    const canvas = canvasRef.current
+    const width = canvas?.width || videoMeta.width
+    const height = canvas?.height || videoMeta.height
+    if (!width || !height) return
+    const payload = {
+      start: { x: startPoint.x / width, y: startPoint.y / height },
+      end: { x: endPoint.x / width, y: endPoint.y / height },
+    }
+    setCookie('tracker_line', JSON.stringify(payload))
+  }, [endPoint, startPoint, videoMeta.height, videoMeta.width])
+
+  useEffect(() => {
+    if (savedScaleAppliedRef.current) return
+    const raw = getCookie('tracker_scale')
+    if (!raw) return
+    try {
+      const payload = JSON.parse(raw)
+      const distance = payload?.distance
+      const unit = payload?.unit
+      if (distance != null && distance !== '') setRealDistance(String(distance))
+      if (unit != null && unit !== '') setUnitLabel(String(unit))
+      savedScaleAppliedRef.current = true
+      addLog('Loaded saved scale from cookie.')
+    } catch (error) {
+      clearCookie('tracker_scale')
+    }
+  }, [addLog])
+
+  useEffect(() => {
+    if (realDistance === '' && unitLabel === '') return
+    const payload = {
+      distance: realDistance,
+      unit: unitLabel,
+    }
+    setCookie('tracker_scale', JSON.stringify(payload))
+  }, [realDistance, unitLabel])
 
   const updateCanvasSize = (video) => {
     const canvas = canvasRef.current
@@ -122,6 +276,40 @@ function App() {
       height: video.videoHeight,
       duration: video.duration,
     })
+  }
+
+  const restoreSavedLine = (video) => {
+    if (!video || savedLineAppliedRef.current) return
+    const raw = getCookie('tracker_line')
+    if (!raw) return
+    try {
+      const payload = JSON.parse(raw)
+      const nextStart = payload?.start
+      const nextEnd = payload?.end
+      if (
+        nextStart &&
+        nextEnd &&
+        Number.isFinite(nextStart.x) &&
+        Number.isFinite(nextStart.y) &&
+        Number.isFinite(nextEnd.x) &&
+        Number.isFinite(nextEnd.y)
+      ) {
+        setStartPoint({
+          x: nextStart.x * video.videoWidth,
+          y: nextStart.y * video.videoHeight,
+        })
+        setEndPoint({
+          x: nextEnd.x * video.videoWidth,
+          y: nextEnd.y * video.videoHeight,
+        })
+        setSelectMode(null)
+        setStatusNote('Loaded saved line points from previous session.')
+        addLog('Loaded saved start/end points from cookie.')
+        savedLineAppliedRef.current = true
+      }
+    } catch (error) {
+      clearCookie('tracker_line')
+    }
   }
 
   const handleFileChange = (event) => {
@@ -140,6 +328,8 @@ function App() {
     setStatus('idle')
     setStatusNote('Click the canvas to set the start point.')
     detectedPointsRef.current = []
+    manualMarkersRef.current = []
+    savedLineAppliedRef.current = false
     setLogs([`Loaded file ${file.name}`])
   }
 
@@ -147,6 +337,7 @@ function App() {
     const video = videoRef.current
     if (!video) return
     updateCanvasSize(video)
+    restoreSavedLine(video)
   }
 
   const drawFirstFrame = () => {
@@ -166,6 +357,8 @@ function App() {
     setStatus('ready')
     video.pause()
     video.currentTime = 0
+    setCurrentTime(getFrameKey(0))
+    restoreSavedLine(video)
     drawFirstFrame()
     setStatusNote('Click the canvas to set the start point.')
     addLog('Video ready. First frame rendered.')
@@ -188,6 +381,11 @@ function App() {
     if (dragTargetRef.current) return
     const coords = getCanvasCoords(event)
     if (!coords) return
+    if (status === 'manual' && startPoint && endPoint) {
+      recordManualMarker(coords)
+      drawFrame()
+      return
+    }
     if (selectMode === 'start') {
       setStartPoint(coords)
       setSelectMode('end')
@@ -206,6 +404,18 @@ function App() {
     return Math.hypot(coords.x - point.x, coords.y - point.y) <= radius
   }
 
+  const findManualMarkerIndex = (timeKey) =>
+    manualMarkersRef.current.findIndex((marker) => Math.abs(marker.time - timeKey) < 0.0006)
+
+  const upsertManualMarker = (timeKey, coords) => {
+    const index = findManualMarkerIndex(timeKey)
+    if (index >= 0) {
+      manualMarkersRef.current[index] = { ...manualMarkersRef.current[index], ...coords, time: timeKey }
+    } else {
+      manualMarkersRef.current.push({ ...coords, time: timeKey })
+    }
+  }
+
   const clampToCanvas = (coords) => {
     const canvas = canvasRef.current
     if (!canvas) return coords
@@ -219,6 +429,16 @@ function App() {
     if (!videoReady || status === 'processing') return
     const coords = getCanvasCoords(event)
     if (!coords) return
+    if (status === 'manual') {
+      const timeKey = getFrameKey(currentTime)
+      const currentIndex = findManualMarkerIndex(timeKey)
+      const currentMarker = currentIndex >= 0 ? manualMarkersRef.current[currentIndex] : null
+      if (currentMarker && hitTestPoint(coords, currentMarker, 10)) {
+        dragTargetRef.current = 'manual'
+        event.currentTarget.setPointerCapture(event.pointerId)
+        return
+      }
+    }
     if (hitTestPoint(coords, startPoint)) {
       dragTargetRef.current = 'start'
     } else if (hitTestPoint(coords, endPoint)) {
@@ -239,6 +459,24 @@ function App() {
       setStartPoint(clamped)
     } else if (dragTargetRef.current === 'end') {
       setEndPoint(clamped)
+    } else if (dragTargetRef.current === 'manual') {
+      if (!startPoint || !endPoint) return
+      const projection = projectToLine(clamped, startPoint, endPoint)
+      if (!projection) return
+      const timeKey = getFrameKey(currentTime)
+      upsertManualMarker(timeKey, { x: projection.x, y: projection.y })
+      const position = scale ? projection.s * scale : null
+      const resultIndex = resultsRef.current.findIndex(
+        (row) => Math.abs(row.time - timeKey) < 0.0006
+      )
+      if (resultIndex >= 0) {
+        resultsRef.current[resultIndex] = { time: timeKey, position }
+      } else {
+        resultsRef.current.push({ time: timeKey, position })
+      }
+      setResults([...resultsRef.current])
+      setProcessedFrames(resultsRef.current.length)
+      drawFrame()
     }
   }
 
@@ -250,6 +488,15 @@ function App() {
 
   const handlePointerLeave = () => {
     dragTargetRef.current = null
+    setHoverPoint(null)
+  }
+
+  const handlePointerHover = (event) => {
+    if (!videoReady || status !== 'manual' || dragTargetRef.current) return
+    const coords = getCanvasCoords(event)
+    if (!coords) return
+    setHoverPoint(clampToCanvas(coords))
+    drawFrame()
   }
 
   const resetPoints = () => {
@@ -258,6 +505,10 @@ function App() {
     setSelectMode('start')
     setStatusNote('Click the canvas to set the start point.')
     detectedPointsRef.current = []
+    manualMarkersRef.current = []
+    clearCookie('tracker_line')
+    savedLineAppliedRef.current = false
+    addLog('Saved line points cleared.')
   }
 
   const seekVideo = (video, time) =>
@@ -355,6 +606,7 @@ function App() {
   const resetProcessingState = () => {
     resultsRef.current = []
     detectedPointsRef.current = []
+    manualMarkersRef.current = []
     setResults([])
     setProcessedFrames(0)
   }
@@ -453,6 +705,79 @@ function App() {
     setResults([...resultsRef.current])
     setProcessedFrames(resultsRef.current.length)
     addLog(`Tracking finished. Frames: ${resultsRef.current.length}.`)
+  }
+
+  const projectToLine = (point, start, end) => {
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const length = Math.hypot(dx, dy)
+    if (!length) return null
+    const ux = dx / length
+    const uy = dy / length
+    const s = (point.x - start.x) * ux + (point.y - start.y) * uy
+    return {
+      s: Math.min(Math.max(s, 0), length),
+      x: start.x + ux * Math.min(Math.max(s, 0), length),
+      y: start.y + uy * Math.min(Math.max(s, 0), length),
+    }
+  }
+
+  const recordManualMarker = (coords) => {
+    if (!videoRef.current || !startPoint || !endPoint) return
+    const projection = projectToLine(coords, startPoint, endPoint)
+    if (!projection) return
+    const timeKey = getFrameKey(videoRef.current.currentTime)
+    upsertManualMarker(timeKey, { x: projection.x, y: projection.y })
+    const position = scale ? projection.s * scale : null
+    const resultIndex = resultsRef.current.findIndex((row) => Math.abs(row.time - timeKey) < 0.0006)
+    if (resultIndex >= 0) {
+      resultsRef.current[resultIndex] = { time: timeKey, position }
+    } else {
+      resultsRef.current.push({ time: timeKey, position })
+    }
+    setResults([...resultsRef.current])
+    setProcessedFrames(resultsRef.current.length)
+    addLog(
+      `Manual marker at ${timeKey.toFixed(3)} s · ${position != null ? position.toFixed(3) : '—'}`
+    )
+  }
+
+  const handleManualMode = async () => {
+    const video = videoRef.current
+    if (!video || !videoReady || !startPoint || !endPoint) {
+      setStatusNote('Load a video and define both points first.')
+      return
+    }
+    if (processingRef.current) return
+    resetProcessingState()
+    processingRef.current = false
+    setStatus('manual')
+    setStatusNote('Manual mode: click the object each frame to add a marker.')
+    addLog('Manual marking mode enabled.')
+    setHoverPoint(null)
+    await seekVideo(video, 0)
+    video.pause()
+    setCurrentTime(getFrameKey(0))
+    drawFirstFrame()
+  }
+
+  const handleExitManualMode = () => {
+    setStatus('idle')
+    setStatusNote('Manual mode exited.')
+    addLog('Manual marking mode exited.')
+    setHoverPoint(null)
+  }
+
+  const stepFrame = async (direction) => {
+    const video = videoRef.current
+    if (!video || !videoReady) return
+    const nextTime = Math.min(
+      Math.max(video.currentTime + direction * frameStepSeconds, 0),
+      video.duration
+    )
+    await seekVideo(video, nextTime)
+    setCurrentTime(getFrameKey(video.currentTime))
+    drawFrame()
   }
 
   const handleStop = () => {
@@ -588,10 +913,27 @@ function App() {
                 <button className="ghost" type="button" onClick={handleStop} disabled={status !== 'processing'}>
                   Stop
                 </button>
+                <button className="ghost" type="button" onClick={handleManualMode} disabled={status === 'manual'}>
+                  Manual marking mode
+                </button>
+                <button className="ghost" type="button" onClick={handleExitManualMode} disabled={status !== 'manual'}>
+                  Exit manual mode
+                </button>
                 <button className="secondary" type="button" onClick={handleDownload} disabled={!results.length}>
                   Download CSV
                 </button>
               </div>
+              {status === 'manual' && (
+                <div className="manual-controls">
+                  <button type="button" className="secondary" onClick={() => stepFrame(-1)}>
+                    Previous frame
+                  </button>
+                  <button type="button" className="secondary" onClick={() => stepFrame(1)}>
+                    Next frame
+                  </button>
+                  <div className="manual-meta">Time: {currentTime.toFixed(3)} s</div>
+                </div>
+              )}
             </div>
 
           <div className="panel-block">
@@ -620,16 +962,11 @@ function App() {
               onClick={handleCanvasClick}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
+              onPointerMoveCapture={handlePointerHover}
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerLeave}
             />
             {!videoReady && <div className="canvas-overlay">Load a video to preview frames.</div>}
-          </div>
-          <div className="tips">
-            <p>
-              <span>Tip:</span> Use a video where the moving object is clearly red and stays near the line between
-              the two calibration points.
-            </p>
           </div>
           <div className="log-panel">
             <div className="log-header">

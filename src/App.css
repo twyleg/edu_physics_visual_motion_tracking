@@ -322,6 +322,21 @@ canvas {
   color: rgba(255, 255, 255, 0.5);
 }
 
+.manual-controls {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.manual-controls button {
+  width: 100%;
+}
+
+.manual-meta {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
 @media (max-width: 700px) {
   .log-header {
     flex-direction: column;
