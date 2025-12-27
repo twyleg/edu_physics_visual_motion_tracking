@@ -12,6 +12,11 @@ function App() {
   const savedLineAppliedRef = useRef(false)
   const magnifierRef = useRef(null)
   const savedScaleAppliedRef = useRef(false)
+  const opencvErrorRef = useRef(false)
+  const savedColorAppliedRef = useRef(false)
+  const lastFrameTimeRef = useRef(null)
+  const fallbackTimerRef = useRef(null)
+  const prevFrameRef = useRef(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [videoName, setVideoName] = useState('')
   const [videoReady, setVideoReady] = useState(false)
@@ -31,6 +36,15 @@ function App() {
   const [frameStepSeconds, setFrameStepSeconds] = useState(1 / 30)
   const [currentTime, setCurrentTime] = useState(0)
   const [hoverPoint, setHoverPoint] = useState(null)
+  const [opencvReady, setOpenCvReady] = useState(false)
+  const [detectionTolerance, setDetectionTolerance] = useState(50)
+  const [showMaskPreview, setShowMaskPreview] = useState(false)
+  const [motionMode, setMotionMode] = useState(false)
+
+  const addLog = useCallback((message) => {
+    const timestamp = new Date().toLocaleTimeString()
+    setLogs((prev) => [...prev.slice(-199), `${timestamp} · ${message}`])
+  }, [])
 
   const lineLength = useMemo(() => {
     if (!startPoint || !endPoint) return 0
@@ -48,6 +62,24 @@ function App() {
     const handle = requestAnimationFrame(() => drawFrame())
     return () => cancelAnimationFrame(handle)
   }, [videoReady, startPoint, endPoint])
+
+  useEffect(() => {
+    let attempts = 0
+    const timer = setInterval(() => {
+      if (window.cv && window.cv.Mat) {
+        setOpenCvReady(true)
+        clearInterval(timer)
+      } else if (attempts > 200) {
+        clearInterval(timer)
+      }
+      attempts += 1
+    }, 100)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (opencvReady) addLog('OpenCV.js ready: using HSV color tracking.')
+  }, [addLog, opencvReady])
 
   useEffect(() => {
     if (status !== 'manual') return
@@ -81,6 +113,211 @@ function App() {
   const getFrameKey = (time) => {
     const step = frameStepSeconds || 1 / 30
     return Number((Math.round(time / step) * step).toFixed(4))
+  }
+
+  const rgbToHsv = (r, g, b) => {
+    const rn = r / 255
+    const gn = g / 255
+    const bn = b / 255
+    const max = Math.max(rn, gn, bn)
+    const min = Math.min(rn, gn, bn)
+    const d = max - min
+    let h = 0
+    if (d !== 0) {
+      if (max === rn) h = ((gn - bn) / d) % 6
+      else if (max === gn) h = (bn - rn) / d + 2
+      else h = (rn - gn) / d + 4
+    }
+    let hue = Math.round(h * 30)
+    if (hue < 0) hue += 180
+    const s = max === 0 ? 0 : Math.round((d / max) * 255)
+    const v = Math.round(max * 255)
+    return { h: hue, s, v }
+  }
+
+  const findColorPositionOpenCv = (canvas, start, end, target, tolerance, returnMask = false) => {
+    if (!window.cv || !window.cv.Mat) return null
+    const cv = window.cv
+    const src = cv.imread(canvas)
+    const rgb = new cv.Mat()
+    const hsv = new cv.Mat()
+    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB)
+    cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV)
+
+    const targetHsv = rgbToHsv(target.r, target.g, target.b)
+    const hTol = Math.round(4 + tolerance * 0.2)
+    const sTol = Math.round(30 + tolerance * 1.4)
+    const vTol = Math.round(30 + tolerance * 1.4)
+    const lowerS = Math.max(0, targetHsv.s - sTol)
+    const upperS = Math.min(255, targetHsv.s + sTol)
+    const lowerV = Math.max(0, targetHsv.v - vTol)
+    const upperV = Math.min(255, targetHsv.v + vTol)
+
+    let mask = new cv.Mat()
+    if (targetHsv.h - hTol < 0 || targetHsv.h + hTol > 179) {
+      const low1 = new cv.Scalar((targetHsv.h - hTol + 180) % 180, lowerS, lowerV)
+      const high1 = new cv.Scalar(179, upperS, upperV)
+      const low2 = new cv.Scalar(0, lowerS, lowerV)
+      const high2 = new cv.Scalar((targetHsv.h + hTol) % 180, upperS, upperV)
+      const mask1 = new cv.Mat()
+      const mask2 = new cv.Mat()
+      cv.inRange(hsv, low1, high1, mask1)
+      cv.inRange(hsv, low2, high2, mask2)
+      cv.bitwise_or(mask1, mask2, mask)
+      mask1.delete()
+      mask2.delete()
+    } else {
+      const low = new cv.Scalar(targetHsv.h - hTol, lowerS, lowerV)
+      const high = new cv.Scalar(targetHsv.h + hTol, upperS, upperV)
+      cv.inRange(hsv, low, high, mask)
+    }
+
+    const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3))
+    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel)
+    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel)
+
+    const lineMask = new cv.Mat.zeros(mask.rows, mask.cols, cv.CV_8UC1)
+    const thickness = Math.max(6, Math.round(6 + tolerance * 0.2))
+    const p1 = new cv.Point(Math.round(start.x), Math.round(start.y))
+    const p2 = new cv.Point(Math.round(end.x), Math.round(end.y))
+    cv.line(lineMask, p1, p2, new cv.Scalar(255, 255, 255, 255), thickness)
+    const constrained = new cv.Mat()
+    cv.bitwise_and(mask, lineMask, constrained)
+
+    const contours = new cv.MatVector()
+    const hierarchy = new cv.Mat()
+    cv.findContours(constrained, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    let best = null
+    let bestArea = 0
+    for (let i = 0; i < contours.size(); i += 1) {
+      const contour = contours.get(i)
+      const area = cv.contourArea(contour)
+      if (area > bestArea) {
+        if (best) best.delete()
+        bestArea = area
+        best = contour
+      } else {
+        contour.delete()
+      }
+    }
+
+    let result = null
+    let maskOut = null
+    if (best && bestArea > 4) {
+      const moments = cv.moments(best)
+      if (moments.m00 !== 0) {
+        const cx = moments.m10 / moments.m00
+        const cy = moments.m01 / moments.m00
+        const projection = projectToLine({ x: cx, y: cy }, start, end)
+        if (projection) {
+          result = { s: projection.s, x: projection.x, y: projection.y }
+        }
+      }
+      best.delete()
+    }
+    if (returnMask) {
+      maskOut = constrained.clone()
+    }
+
+    src.delete()
+    rgb.delete()
+    hsv.delete()
+    mask.delete()
+    lineMask.delete()
+    constrained.delete()
+    kernel.delete()
+    contours.delete()
+    hierarchy.delete()
+
+    return { detection: result, mask: maskOut }
+  }
+
+  const findMotionPositionOpenCv = (canvas, start, end, tolerance, returnMask = false) => {
+    if (!window.cv || !window.cv.Mat) return null
+    const cv = window.cv
+    const src = cv.imread(canvas)
+    const gray = new cv.Mat()
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY)
+
+    if (!prevFrameRef.current) {
+      prevFrameRef.current = gray.clone()
+      src.delete()
+      gray.delete()
+      return { detection: null, mask: null }
+    }
+
+    const diff = new cv.Mat()
+    cv.absdiff(prevFrameRef.current, gray, diff)
+    prevFrameRef.current.delete()
+    prevFrameRef.current = gray.clone()
+
+    const blur = new cv.Mat()
+    cv.GaussianBlur(diff, blur, new cv.Size(3, 3), 0)
+    const motionMask = new cv.Mat()
+    const thresholdValue = Math.max(8, Math.round(8 + tolerance * 0.5))
+    cv.threshold(blur, motionMask, thresholdValue, 255, cv.THRESH_BINARY)
+
+    const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3))
+    cv.morphologyEx(motionMask, motionMask, cv.MORPH_OPEN, kernel)
+    cv.morphologyEx(motionMask, motionMask, cv.MORPH_CLOSE, kernel)
+
+    const lineMask = new cv.Mat.zeros(motionMask.rows, motionMask.cols, cv.CV_8UC1)
+    const thickness = Math.max(6, Math.round(6 + tolerance * 0.2))
+    const p1 = new cv.Point(Math.round(start.x), Math.round(start.y))
+    const p2 = new cv.Point(Math.round(end.x), Math.round(end.y))
+    cv.line(lineMask, p1, p2, new cv.Scalar(255, 255, 255, 255), thickness)
+    const constrained = new cv.Mat()
+    cv.bitwise_and(motionMask, lineMask, constrained)
+
+    const contours = new cv.MatVector()
+    const hierarchy = new cv.Mat()
+    cv.findContours(constrained, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    let best = null
+    let bestArea = 0
+    for (let i = 0; i < contours.size(); i += 1) {
+      const contour = contours.get(i)
+      const area = cv.contourArea(contour)
+      if (area > bestArea) {
+        if (best) best.delete()
+        bestArea = area
+        best = contour
+      } else {
+        contour.delete()
+      }
+    }
+
+    let result = null
+    let maskOut = null
+    if (best && bestArea > 4) {
+      const moments = cv.moments(best)
+      if (moments.m00 !== 0) {
+        const cx = moments.m10 / moments.m00
+        const cy = moments.m01 / moments.m00
+        const projection = projectToLine({ x: cx, y: cy }, start, end)
+        if (projection) {
+          result = { s: projection.s, x: projection.x, y: projection.y }
+        }
+      }
+      best.delete()
+    }
+    if (returnMask) {
+      maskOut = constrained.clone()
+    }
+
+    src.delete()
+    gray.delete()
+    diff.delete()
+    blur.delete()
+    motionMask.delete()
+    lineMask.delete()
+    constrained.delete()
+    kernel.delete()
+    contours.delete()
+    hierarchy.delete()
+
+    return { detection: result, mask: maskOut }
   }
 
   const drawOverlay = (ctx) => {
@@ -205,11 +442,6 @@ function App() {
     ctx.restore()
   }
 
-  const addLog = useCallback((message) => {
-    const timestamp = new Date().toLocaleTimeString()
-    setLogs((prev) => [...prev.slice(-199), `${timestamp} · ${message}`])
-  }, [])
-
   const setCookie = (name, value, days = 365) => {
     const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString()
     document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`
@@ -265,6 +497,29 @@ function App() {
     }
     setCookie('tracker_scale', JSON.stringify(payload))
   }, [realDistance, unitLabel])
+
+  useEffect(() => {
+    if (savedColorAppliedRef.current) return
+    const raw = getCookie('tracker_color')
+    if (!raw) return
+    try {
+      const payload = JSON.parse(raw)
+      const hex = payload?.hex
+      if (hex) {
+        handleTargetColorChange(hex)
+        savedColorAppliedRef.current = true
+        addLog('Loaded saved target color from cookie.')
+      }
+    } catch (error) {
+      clearCookie('tracker_color')
+    }
+  }, [addLog])
+
+  useEffect(() => {
+    if (!targetHex) return
+    const payload = { hex: targetHex }
+    setCookie('tracker_color', JSON.stringify(payload))
+  }, [targetHex])
 
   const updateCanvasSize = (video) => {
     const canvas = canvasRef.current
@@ -537,7 +792,12 @@ function App() {
     if (rgb) setTargetColor(rgb)
   }
 
-  const findRedPosition = (imageData, start, end, target) => {
+  const getRgbMatchParams = (tolerance) => ({
+    intensityThreshold: Math.round(60 + tolerance * 1.4),
+    dominance: Math.round(60 - tolerance * 0.4),
+  })
+
+  const findRedPosition = (imageData, start, end, target, tolerance) => {
     const { data, width, height } = imageData
     const dx = end.x - start.x
     const dy = end.y - start.y
@@ -549,8 +809,7 @@ function App() {
     const ny = ux
     const sampleStep = 2
     const searchRadius = 6
-    const intensityThreshold = 120
-    const dominance = 45
+    const { intensityThreshold, dominance } = getRgbMatchParams(tolerance)
     const { r: tr, g: tg, b: tb } = target
 
     for (let s = length; s >= 0; s -= sampleStep) {
@@ -573,23 +832,78 @@ function App() {
     return null
   }
 
-  const processFrame = (mediaTime) => {
+  const processFrame = (mediaTime, shouldLog = false) => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-    const positionPx = findRedPosition(imageData, startPoint, endPoint, targetColor)
+    let positionPx = null
+    let detection = null
+    if (opencvReady) {
+      try {
+        const result = motionMode
+          ? findMotionPositionOpenCv(
+              canvas,
+              startPoint,
+              endPoint,
+              detectionTolerance,
+              showMaskPreview
+            )
+          : findColorPositionOpenCv(
+              canvas,
+              startPoint,
+              endPoint,
+              targetColor,
+              detectionTolerance,
+              showMaskPreview
+            )
+        detection = result?.detection ?? null
+        positionPx = detection?.s ?? null
+        if (showMaskPreview && result?.mask) {
+          window.cv.imshow(canvas, result.mask)
+          result.mask.delete()
+        }
+      } catch (error) {
+        if (!opencvErrorRef.current) {
+          addLog('OpenCV error detected, falling back to RGB matcher.')
+          opencvErrorRef.current = true
+        }
+        setOpenCvReady(false)
+      }
+    } else {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      if (showMaskPreview) {
+        const { intensityThreshold, dominance } = getRgbMatchParams(detectionTolerance)
+        const { r: tr, g: tg, b: tb } = targetColor
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          const r = imageData.data[i]
+          const g = imageData.data[i + 1]
+          const b = imageData.data[i + 2]
+          const distance = Math.hypot(r - tr, g - tg, b - tb)
+          if (!(distance < intensityThreshold && r >= tr - dominance)) {
+            imageData.data[i] = 0
+            imageData.data[i + 1] = 0
+            imageData.data[i + 2] = 0
+          }
+        }
+        ctx.putImageData(imageData, 0, 0)
+      }
+      positionPx = findRedPosition(imageData, startPoint, endPoint, targetColor, detectionTolerance)
+    }
     if (positionPx != null && startPoint && endPoint) {
-      const dx = endPoint.x - startPoint.x
-      const dy = endPoint.y - startPoint.y
-      const length = Math.hypot(dx, dy)
-      if (length > 0) {
-        detectedPointsRef.current.push({
-          x: startPoint.x + (dx / length) * positionPx,
-          y: startPoint.y + (dy / length) * positionPx,
-        })
+      if (detection) {
+        detectedPointsRef.current.push({ x: detection.x, y: detection.y })
+      } else {
+        const dx = endPoint.x - startPoint.x
+        const dy = endPoint.y - startPoint.y
+        const length = Math.hypot(dx, dy)
+        if (length > 0) {
+          detectedPointsRef.current.push({
+            x: startPoint.x + (dx / length) * positionPx,
+            y: startPoint.y + (dy / length) * positionPx,
+          })
+        }
       }
     }
     drawOverlay(ctx)
@@ -601,14 +915,57 @@ function App() {
     if (resultsRef.current.length % 10 === 0) {
       setProcessedFrames(resultsRef.current.length)
     }
+    if (shouldLog) {
+      if (positionPx != null && scale != null) {
+        addLog(`Frame ${mediaTime.toFixed(3)} s · found at ${entry.position.toFixed(3)} ${unitLabel || 'units'}`)
+      } else {
+        addLog(`Frame ${mediaTime.toFixed(3)} s · target not found`)
+      }
+    }
   }
 
   const resetProcessingState = () => {
     resultsRef.current = []
     detectedPointsRef.current = []
     manualMarkersRef.current = []
+    opencvErrorRef.current = false
+    if (prevFrameRef.current) {
+      prevFrameRef.current.delete()
+      prevFrameRef.current = null
+    }
     setResults([])
     setProcessedFrames(0)
+  }
+
+  const runAutoFrameByFrame = async (label) => {
+    const video = videoRef.current
+    if (!video) return
+    setStatus('processing')
+    setStatusNote('Analyzing frames (step mode)...')
+    resetProcessingState()
+    processingRef.current = true
+    addLog(label)
+
+    await seekVideo(video, 0)
+    video.pause()
+
+    const totalSteps = Math.ceil(video.duration / frameStepSeconds)
+    for (let i = 0; i <= totalSteps; i += 1) {
+      if (!processingRef.current) break
+      const t = Math.min(i * frameStepSeconds, video.duration)
+      await seekVideo(video, t)
+      processFrame(t, true)
+      if (i % 30 === 0) {
+        addLog(`Processed frame ${i}/${totalSteps}`)
+      }
+    }
+
+    processingRef.current = false
+    setStatus('done')
+    setStatusNote(`Finished. ${resultsRef.current.length} frames processed.`)
+    setResults([...resultsRef.current])
+    setProcessedFrames(resultsRef.current.length)
+    addLog(`Tracking finished. Frames: ${resultsRef.current.length}.`)
   }
 
   const handleProcess = async () => {
@@ -629,7 +986,20 @@ function App() {
     addLog('Tracking started (video playback).')
 
     await seekVideo(video, 0)
-    await video.play()
+    let played = false
+    try {
+      await video.play()
+      played = true
+    } catch (error) {
+      addLog('Video playback blocked; switching to step mode.')
+    }
+    if (!played || video.paused) {
+      processingRef.current = false
+      await runAutoFrameByFrame(
+        `Tracking started (fallback step mode). Step: ${frameStepSeconds.toFixed(4)} s.`
+      )
+      return
+    }
 
     const finish = () => {
       processingRef.current = false
@@ -639,12 +1009,20 @@ function App() {
       setResults([...resultsRef.current])
       setProcessedFrames(resultsRef.current.length)
       addLog(`Tracking finished. Frames: ${resultsRef.current.length}.`)
+      if (fallbackTimerRef.current) {
+        clearInterval(fallbackTimerRef.current)
+        fallbackTimerRef.current = null
+      }
+      video.removeEventListener('ended', finish)
     }
+
+    video.addEventListener('ended', finish)
 
     if ('requestVideoFrameCallback' in video) {
       const handleFrame = (_now, metadata) => {
         if (!processingRef.current) return
-        processFrame(metadata?.mediaTime ?? video.currentTime)
+        processFrame(metadata?.mediaTime ?? video.currentTime, true)
+        lastFrameTimeRef.current = metadata?.mediaTime ?? video.currentTime
         if (video.currentTime >= video.duration - 0.0005) {
           finish()
           return
@@ -659,12 +1037,31 @@ function App() {
           clearInterval(timer)
           return
         }
-        processFrame(video.currentTime)
+        processFrame(video.currentTime, true)
+        lastFrameTimeRef.current = video.currentTime
         if (video.currentTime >= video.duration - 0.0005) {
           clearInterval(timer)
           finish()
         }
       }, frameInterval)
+    }
+
+    if (!fallbackTimerRef.current) {
+      fallbackTimerRef.current = setInterval(() => {
+        if (!processingRef.current) {
+          clearInterval(fallbackTimerRef.current)
+          fallbackTimerRef.current = null
+          return
+        }
+        const current = video.currentTime
+        if (lastFrameTimeRef.current == null || Math.abs(current - lastFrameTimeRef.current) > 0.0005) {
+          processFrame(current, true)
+          lastFrameTimeRef.current = current
+        }
+        if (current >= video.duration - 0.0005) {
+          finish()
+        }
+      }, 100)
     }
   }
 
@@ -679,32 +1076,9 @@ function App() {
       return
     }
     if (processingRef.current) return
-    setStatus('processing')
-    setStatusNote('Analyzing frames (step mode)...')
-    resetProcessingState()
-    processingRef.current = true
-    addLog(`Tracking started (frame-by-frame). Step: ${frameStepSeconds.toFixed(4)} s.`)
-
-    await seekVideo(video, 0)
-    video.pause()
-
-    const totalSteps = Math.ceil(video.duration / frameStepSeconds)
-    for (let i = 0; i <= totalSteps; i += 1) {
-      if (!processingRef.current) break
-      const t = Math.min(i * frameStepSeconds, video.duration)
-      await seekVideo(video, t)
-      processFrame(t)
-      if (i % 30 === 0) {
-        addLog(`Processed frame ${i}/${totalSteps}`)
-      }
-    }
-
-    processingRef.current = false
-    setStatus('done')
-    setStatusNote(`Finished. ${resultsRef.current.length} frames processed.`)
-    setResults([...resultsRef.current])
-    setProcessedFrames(resultsRef.current.length)
-    addLog(`Tracking finished. Frames: ${resultsRef.current.length}.`)
+    await runAutoFrameByFrame(
+      `Tracking started (frame-by-frame). Step: ${frameStepSeconds.toFixed(4)} s.`
+    )
   }
 
   const projectToLine = (point, start, end) => {
@@ -787,6 +1161,10 @@ function App() {
     setStatus('idle')
     setStatusNote('Processing stopped.')
     addLog('Tracking stopped by user.')
+    if (fallbackTimerRef.current) {
+      clearInterval(fallbackTimerRef.current)
+      fallbackTimerRef.current = null
+    }
   }
 
   const handleDownload = () => {
@@ -893,6 +1271,36 @@ function App() {
               <span className="color-value">
                 {targetColor.r}, {targetColor.g}, {targetColor.b}
               </span>
+            </div>
+            <div className="tolerance-row">
+              <label htmlFor="detection-tolerance">Detection tolerance</label>
+              <input
+                id="detection-tolerance"
+                type="range"
+                min="0"
+                max="100"
+                value={detectionTolerance}
+                onChange={(event) => setDetectionTolerance(Number(event.target.value))}
+              />
+              <span>{detectionTolerance}</span>
+            </div>
+            <div className="toggle-row">
+              <label htmlFor="mask-preview">Mask preview</label>
+              <input
+                id="mask-preview"
+                type="checkbox"
+                checked={showMaskPreview}
+                onChange={(event) => setShowMaskPreview(event.target.checked)}
+              />
+            </div>
+            <div className="toggle-row">
+              <label htmlFor="motion-mode">Motion mode (OpenCV)</label>
+              <input
+                id="motion-mode"
+                type="checkbox"
+                checked={motionMode}
+                onChange={(event) => setMotionMode(event.target.checked)}
+              />
             </div>
           </div>
 

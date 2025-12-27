@@ -225,6 +225,34 @@ input[type='text'] {
   color: rgba(245, 245, 245, 0.9);
 }
 
+.tolerance-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 1rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9rem;
+}
+
+.tolerance-row input[type='range'] {
+  width: 100%;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9rem;
+}
+
+.toggle-row input[type='checkbox'] {
+  transform: scale(1.1);
+}
+
 .stage {
   display: flex;
   flex-direction: column;
