@@ -4,5 +4,5 @@ import react from '@vitejs/plugin-react'
 // Change "my-vite-app" to your GitHub repo name
 export default defineConfig({
   plugins: [react()],
-  base: '/playground_react_vite_github_pages/',
+  base: '/edu_physics_visual_motion_tracking/',
 })
