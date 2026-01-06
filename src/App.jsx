@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { supportedLanguages, translate } from './i18n'
 import './App.css'
+
+const sampleVideos = [
+  {
+    href: new URL('./resources/example_clip_accelerated_motion.mp4', import.meta.url).href,
+    labelKey: 'banner.sample1',
+  },
+  {
+    href: new URL('./resources/example_clip_uniform_motion.mp4', import.meta.url).href,
+    labelKey: 'banner.sample2',
+  },
+]
 
 function App() {
   const videoRef = useRef(null)
@@ -12,6 +24,7 @@ function App() {
   const savedScaleAppliedRef = useRef(false)
   const pendingSettingsRef = useRef(null)
   const fpsEstimateRef = useRef(60)
+  const [lang, setLang] = useState('en')
   const [videoUrl, setVideoUrl] = useState('')
   const [videoName, setVideoName] = useState('')
   const [videoReady, setVideoReady] = useState(false)
@@ -22,7 +35,6 @@ function App() {
   const [realDistance, setRealDistance] = useState('')
   const [unitLabel, setUnitLabel] = useState('m')
   const [status, setStatus] = useState('idle')
-  const [statusNote, setStatusNote] = useState('Load a video to begin.')
   const [processedFrames, setProcessedFrames] = useState(0)
   const [results, setResults] = useState([])
   const [logs, setLogs] = useState([])
@@ -30,6 +42,16 @@ function App() {
   const [fpsOverride, setFpsOverride] = useState(240)
   const [currentTime, setCurrentTime] = useState(0)
   const [hoverPoint, setHoverPoint] = useState(null)
+
+  const t = useCallback((key, params) => translate(lang, key, params), [lang])
+  const [statusNoteState, setStatusNoteState] = useState({ key: 'note.loadVideo' })
+  const statusNoteText = useMemo(
+    () => t(statusNoteState.key, statusNoteState.params),
+    [statusNoteState, t]
+  )
+  const updateStatusNote = useCallback((key, params) => setStatusNoteState({ key, params }), [])
+  const [showBanner, setShowBanner] = useState(true)
+  const [showCookieNotice, setShowCookieNotice] = useState(false)
 
   const addLog = useCallback((message) => {
     const timestamp = new Date().toLocaleTimeString()
@@ -57,11 +79,22 @@ function App() {
     return distance / lineLength
   }, [realDistance, lineLength])
 
+  const modeLabel = useMemo(() => {
+    if (selectMode === 'start') return t('details.modeStart')
+    if (selectMode === 'end') return t('details.modeEnd')
+    return t('details.modeLocked')
+  }, [selectMode, t])
+
   useEffect(() => {
     if (!videoReady) return
     const handle = requestAnimationFrame(() => drawFrame())
     return () => cancelAnimationFrame(handle)
   }, [videoReady, startPoint, endPoint])
+
+  useEffect(() => {
+    const accepted = localStorage.getItem('cookie_notice_accepted') === '1'
+    setShowCookieNotice(!accepted)
+  }, [])
 
   useEffect(() => {
     if (status !== 'manual') return
@@ -286,7 +319,7 @@ function App() {
       if (distance != null && distance !== '') setRealDistance(String(distance))
       if (unit != null && unit !== '') setUnitLabel(String(unit))
       savedScaleAppliedRef.current = true
-      addLog('Loaded saved scale from cookie.')
+      addLog(t('log.scaleLoaded'))
     } catch (error) {
       clearCookie('tracker_scale')
     }
@@ -351,8 +384,8 @@ function App() {
       setProcessedFrames(resultsRef.current.length)
     }
     setCurrentTime(settings?.currentTime ?? getFrameKey(0))
-    setStatusNote('Settings loaded.')
-    addLog('Settings file applied.')
+    updateStatusNote('note.settingsLoaded')
+    addLog(t('log.settingsApplied'))
     drawFrame()
   }
 
@@ -393,8 +426,8 @@ function App() {
           y: nextEnd.y * video.videoHeight,
         })
         setSelectMode(null)
-        setStatusNote('Loaded saved line points from previous session.')
-        addLog('Loaded saved start/end points from cookie.')
+        updateStatusNote('note.savedLine')
+        addLog(t('log.lineLoaded'))
         savedLineAppliedRef.current = true
       }
     } catch (error) {
@@ -416,11 +449,12 @@ function App() {
     setResults([])
     setProcessedFrames(0)
     setStatus('idle')
-    setStatusNote('Click the canvas to set the start point.')
+    updateStatusNote('note.setStart')
     manualMarkersRef.current = []
     savedLineAppliedRef.current = false
-    setLogs([`Loaded file ${file.name}`])
+    setLogs([`${new Date().toLocaleTimeString()} · ${t('log.loadedFile', { file: file.name })}`])
     pendingSettingsRef.current = null
+    setShowBanner(false)
   }
 
   const handleLoadedMetadata = () => {
@@ -454,8 +488,8 @@ function App() {
     setCurrentTime(getFrameKey(0))
     restoreSavedLine(video)
     drawFirstFrame()
-    setStatusNote('Click the canvas to set the start point.')
-    addLog('Video ready. First frame rendered.')
+    updateStatusNote('note.setStart')
+    addLog(t('log.videoReady'))
     if (pendingSettingsRef.current) {
       applySettings(pendingSettingsRef.current, video)
       pendingSettingsRef.current = null
@@ -487,13 +521,13 @@ function App() {
     if (selectMode === 'start') {
       setStartPoint(coords)
       setSelectMode('end')
-      setStatusNote('Now click to set the end point.')
-      addLog(`Start point set at (${coords.x.toFixed(1)}, ${coords.y.toFixed(1)})`)
+      updateStatusNote('note.setEnd')
+      addLog(t('log.startPoint', { x: coords.x.toFixed(1), y: coords.y.toFixed(1) }))
     } else if (selectMode === 'end') {
       setEndPoint(coords)
       setSelectMode(null)
-      setStatusNote('Enter the real distance and start tracking.')
-      addLog(`End point set at (${coords.x.toFixed(1)}, ${coords.y.toFixed(1)})`)
+      updateStatusNote('note.enterDistance')
+      addLog(t('log.endPoint', { x: coords.x.toFixed(1), y: coords.y.toFixed(1) }))
     }
   }
 
@@ -601,11 +635,11 @@ function App() {
     setStartPoint(null)
     setEndPoint(null)
     setSelectMode('start')
-    setStatusNote('Click the canvas to set the start point.')
+    updateStatusNote('note.setStart')
     manualMarkersRef.current = []
     clearCookie('tracker_line')
     savedLineAppliedRef.current = false
-    addLog('Saved line points cleared.')
+    addLog(t('log.lineCleared'))
   }
 
   const seekVideo = (video, time) =>
@@ -649,7 +683,10 @@ function App() {
     setResults([...resultsRef.current])
     setProcessedFrames(resultsRef.current.length)
     addLog(
-      `Manual marker at ${timeKey.toFixed(3)} s · ${position != null ? position.toFixed(3) : '—'}`
+      t('log.manualMarker', {
+        time: timeKey.toFixed(3),
+        position: position != null ? position.toFixed(3) : '—',
+      })
     )
   }
 
@@ -663,15 +700,15 @@ function App() {
   const handleManualMode = async () => {
     const video = videoRef.current
     if (!video || !videoReady || !startPoint || !endPoint) {
-      setStatusNote('Load a video and define both points first.')
+      updateStatusNote('note.missingLine')
       return
     }
     if (!manualMarkersRef.current.length && !resultsRef.current.length) {
       resetManualState()
     }
     setStatus('manual')
-    setStatusNote('Manual mode: click the object each frame to add a marker.')
-    addLog('Manual marking mode enabled.')
+    updateStatusNote('note.manualInstruction')
+    addLog(t('log.manualEnabled'))
     setHoverPoint(null)
     await seekVideo(video, 0)
     video.pause()
@@ -681,8 +718,8 @@ function App() {
 
   const handleExitManualMode = () => {
     setStatus('idle')
-    setStatusNote('Manual mode exited.')
-    addLog('Manual marking mode exited.')
+    updateStatusNote('note.manualExit')
+    addLog(t('log.manualExited'))
     setHoverPoint(null)
   }
 
@@ -762,7 +799,7 @@ function App() {
     link.click()
     link.remove()
     URL.revokeObjectURL(link.href)
-    addLog('Settings file downloaded.')
+    addLog(t('log.settingsDownload'))
   }
 
   const handleSettingsFileChange = (event) => {
@@ -777,11 +814,11 @@ function App() {
           applySettings(settings, video)
         } else {
           pendingSettingsRef.current = settings
-          addLog('Settings file loaded. Waiting for video metadata to apply.')
-          setStatusNote('Settings loaded. Load the matching video to apply.')
+          addLog(t('log.settingsWaiting'))
+          updateStatusNote('note.settingsWaiting')
         }
       } catch (error) {
-        addLog('Failed to parse settings file.')
+        addLog(t('log.settingsParseFailed'))
       }
     }
     reader.readAsText(file)
@@ -789,59 +826,96 @@ function App() {
 
   return (
     <div className="app">
+      {showBanner && (
+        <div className="top-banner">
+          <div>
+            <strong>{t('banner.title')}</strong>
+            <p>{t('banner.desc')}</p>
+          </div>
+          <div className="banner-links">
+            {sampleVideos.map((sample) => (
+              <a key={sample.href} href={sample.href} target="_blank" rel="noreferrer">
+                {t(sample.labelKey)}
+              </a>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="banner-dismiss"
+            onClick={() => setShowBanner(false)}
+            aria-label={t('banner.close')}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <header className="hero">
         <div>
-          <p className="eyebrow">Visual Motion Tracker</p>
-          <h1>Manually track a moving object along a straight line.</h1>
-          <p className="hero-sub">
-            Load a video, set the line, step through frames, and click the object to export time-position data
-            as CSV.
-          </p>
+          <p className="eyebrow">{t('eyebrow')}</p>
+          <h1>{t('hero.title')}</h1>
+          <p className="hero-sub">{t('hero.sub')}</p>
+        </div>
+        <div className="language-switcher">
+          <label className="sr-only" htmlFor="language-select">
+            {t('language.label')}
+          </label>
+          <select
+            id="language-select"
+            value={lang}
+            onChange={(event) => setLang(event.target.value)}
+            aria-label={t('language.label')}
+          >
+            {supportedLanguages.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.flag}
+              </option>
+            ))}
+          </select>
         </div>
       </header>
 
       <main className="layout">
         <section className="panel">
           <div className="panel-block">
-            <h2>1. Video</h2>
+            <h2>{t('video.title')}</h2>
             <label className="file-input">
               <input type="file" accept="video/*" onChange={handleFileChange} />
-              <span>{videoName || 'Choose a video file'}</span>
+              <span>{videoName || t('video.choose')}</span>
             </label>
             <label className="file-input secondary-input">
               <input type="file" accept=".json,application/json" onChange={handleSettingsFileChange} />
-              <span>Load settings JSON</span>
+              <span>{t('video.loadSettings')}</span>
             </label>
-            <p className="panel-note">{statusNote}</p>
+            <p className="panel-note">{statusNoteText}</p>
           </div>
 
           <div className="panel-block">
-            <h2>2. Line setup</h2>
+            <h2>{t('line.title')}</h2>
             <div className="stack">
               <button className="secondary" type="button" onClick={() => setSelectMode('start')}>
-                Select start
+                {t('line.selectStart')}
               </button>
               <button className="secondary" type="button" onClick={() => setSelectMode('end')}>
-                Select end
+                {t('line.selectEnd')}
               </button>
               <button className="ghost" type="button" onClick={resetPoints}>
-                Reset points
+                {t('line.reset')}
               </button>
             </div>
             <div className="meta-row">
-              <span>Line length</span>
+              <span>{t('line.length')}</span>
               <strong>{lineLength ? `${lineLength.toFixed(1)} px` : '—'}</strong>
             </div>
           </div>
 
           <div className="panel-block">
-            <h2>3. Calibration</h2>
+            <h2>{t('calibration.title')}</h2>
             <div className="input-row">
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                placeholder="Real distance"
+                placeholder={t('calibration.realDistance')}
                 value={realDistance}
                 onChange={(event) => setRealDistance(event.target.value)}
               />
@@ -853,55 +927,55 @@ function App() {
               />
             </div>
             <div className="meta-row">
-              <span>Scale</span>
-              <strong>{scale ? `${scale.toFixed(4)} ${unitLabel || 'units'}/px` : '—'}</strong>
+              <span>{t('calibration.scale')}</span>
+              <strong>{scale ? `${scale.toFixed(4)} ${unitLabel || t('calibration.defaultUnit')}/px` : '—'}</strong>
             </div>
           </div>
 
           <div className="panel-block">
-            <h2>4. Manual tracking</h2>
+            <h2>{t('manual.title')}</h2>
             <div className="stack">
               <button className="ghost" type="button" onClick={handleManualMode} disabled={status === 'manual'}>
-                Manual marking mode
+                {t('manual.enter')}
               </button>
               <button className="ghost" type="button" onClick={handleExitManualMode} disabled={status !== 'manual'}>
-                Exit manual mode
+                {t('manual.exit')}
               </button>
               <button className="secondary" type="button" onClick={handleDownloadSettings}>
-                Download settings
+                {t('manual.downloadSettings')}
               </button>
               <button className="secondary" type="button" onClick={handleDownload} disabled={!results.length}>
-                Download CSV
+                {t('manual.downloadCsv')}
               </button>
             </div>
             {status === 'manual' && (
               <div className="manual-controls">
                 <button type="button" className="secondary" onClick={() => stepFrame(-1)}>
-                  Previous frame
+                  {t('manual.prevFrame')}
                 </button>
                 <button type="button" className="secondary" onClick={() => stepFrame(1)}>
-                  Next frame
+                  {t('manual.nextFrame')}
                 </button>
-                <div className="manual-meta">Time: {currentTime.toFixed(3)} s</div>
+                <div className="manual-meta">{t('manual.time', { time: currentTime.toFixed(3) })}</div>
               </div>
             )}
           </div>
 
           <div className="panel-block">
-            <h2>Details</h2>
+            <h2>{t('details.title')}</h2>
             <div className="meta-row">
-              <span>Resolution</span>
+              <span>{t('details.resolution')}</span>
               <strong>
                 {videoMeta.width && videoMeta.height ? `${videoMeta.width} × ${videoMeta.height}` : '—'}
               </strong>
             </div>
             <div className="meta-row">
-              <span>Duration</span>
+              <span>{t('details.duration')}</span>
               <strong>{videoMeta.duration ? `${videoMeta.duration.toFixed(2)} s` : '—'}</strong>
             </div>
             <div className="meta-row">
-              <span>Mode</span>
-              <strong>{selectMode || 'locked'}</strong>
+              <span>{t('details.mode')}</span>
+              <strong>{modeLabel}</strong>
             </div>
           </div>
         </section>
@@ -917,13 +991,13 @@ function App() {
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerLeave}
             />
-            {!videoReady && <div className="canvas-overlay">Load a video to preview frames.</div>}
+            {!videoReady && <div className="canvas-overlay">{t('overlay.prompt')}</div>}
           </div>
           <div className="log-panel">
             <div className="log-header">
-              <span>Tracking log</span>
+              <span>{t('log.title')}</span>
               <div className="log-controls">
-                <label htmlFor="frame-step">Step (frames)</label>
+                <label htmlFor="frame-step">{t('log.step')}</label>
                 <input
                   id="frame-step"
                   type="number"
@@ -932,7 +1006,7 @@ function App() {
                   value={frameStepFrames}
                   onChange={(event) => setFrameStepFrames(Number(event.target.value) || 1)}
                 />
-                <label htmlFor="fps-override">FPS</label>
+                <label htmlFor="fps-override">{t('log.fps')}</label>
                 <input
                   id="fps-override"
                   type="number"
@@ -942,7 +1016,7 @@ function App() {
                   onChange={(event) => setFpsOverride(Number(event.target.value) || 30)}
                 />
                 <button type="button" className="ghost" onClick={() => setLogs([])}>
-                  Clear
+                  {t('log.clear')}
                 </button>
               </div>
             </div>
@@ -950,7 +1024,7 @@ function App() {
               {logs.length ? (
                 logs.map((entry, index) => <div key={`${entry}-${index}`}>{entry}</div>)
               ) : (
-                <div className="log-empty">No log entries yet.</div>
+                <div className="log-empty">{t('log.empty')}</div>
               )}
             </div>
           </div>
@@ -963,6 +1037,24 @@ function App() {
           />
         </section>
       </main>
+      {showCookieNotice && (
+        <div className="cookie-banner">
+          <div>
+            <strong>{t('cookie.title')}</strong>
+            <p>{t('cookie.desc')}</p>
+          </div>
+          <button
+            type="button"
+            className="cookie-ok"
+            onClick={() => {
+              localStorage.setItem('cookie_notice_accepted', '1')
+              setShowCookieNotice(false)
+            }}
+          >
+            {t('cookie.ok')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

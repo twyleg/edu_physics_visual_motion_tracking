@@ -31,12 +31,160 @@ body {
   gap: 2rem;
 }
 
+.top-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 0.9rem 3.2rem 0.9rem 1.1rem;
+  border-radius: 1rem;
+  background: linear-gradient(120deg, rgba(37, 99, 235, 0.2), rgba(14, 165, 233, 0.18));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+  position: relative;
+}
+
+.top-banner strong {
+  display: block;
+  font-size: 1rem;
+  margin-bottom: 0.2rem;
+}
+
+.top-banner p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.banner-links {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.banner-links a {
+  color: #0b0b0b;
+  background: #f5f5f5;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.7rem;
+  text-decoration: none;
+  font-weight: 600;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.banner-links a:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+}
+
+.cookie-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  width: min(960px, 94vw);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 0.9rem;
+  background: rgba(18, 18, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+}
+
+.cookie-banner p {
+  margin: 0.2rem 0 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.cookie-ok {
+  background: #f5f5f5;
+  color: #0b0b0b;
+  padding: 0.6rem 1rem;
+  border-radius: 0.7rem;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.35);
+}
+
+.cookie-ok:hover {
+  transform: translateY(-1px);
+}
+
+.banner-dismiss {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.65rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+  background: rgba(255, 255, 255, 0.18);
+  color: #f5f5f5;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: none;
+  z-index: 1;
+}
+
+.banner-dismiss:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .hero {
   display: flex;
   justify-content: space-between;
   gap: 2rem;
   flex-wrap: wrap;
   align-items: center;
+  position: relative;
+}
+
+.language-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.8rem;
+  background: rgba(18, 18, 18, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.language-switcher label {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.language-switcher select {
+  background: rgba(12, 12, 12, 0.9);
+  color: #f5f5f5;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.95rem;
+  min-width: 3.2rem;
+  text-align: center;
 }
 
 .eyebrow {
