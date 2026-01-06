@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { TranslateFn } from '../i18n'
 
-export function useTracker(t) {
+type StatusNote = {
+  key: string
+  params?: Record<string, any>
+}
+
+export function useTracker(t: TranslateFn) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const resultsRef = useRef([])
@@ -29,12 +35,15 @@ export function useTracker(t) {
   const [currentTime, setCurrentTime] = useState(0)
   const [hoverPoint, setHoverPoint] = useState(null)
 
-  const [statusNoteState, setStatusNoteState] = useState({ key: 'note.loadVideo' })
+  const [statusNoteState, setStatusNoteState] = useState<StatusNote>({ key: 'note.loadVideo' })
   const statusNoteText = useMemo(
     () => t(statusNoteState.key, statusNoteState.params),
     [statusNoteState, t]
   )
-  const updateStatusNote = useCallback((key, params) => setStatusNoteState({ key, params }), [])
+  const updateStatusNote = useCallback(
+    (key: string, params?: Record<string, any>) => setStatusNoteState({ key, params }),
+    []
+  )
 
   const addLog = useCallback((message) => {
     const timestamp = new Date().toLocaleTimeString()
@@ -620,7 +629,7 @@ export function useTracker(t) {
   }
 
   const seekVideo = (video, time) =>
-    new Promise((resolve) => {
+    new Promise<void>((resolve) => {
       const handleSeeked = () => {
         video.removeEventListener('seeked', handleSeeked)
         resolve()
@@ -785,6 +794,9 @@ export function useTracker(t) {
     const reader = new FileReader()
     reader.onload = () => {
       try {
+        if (typeof reader.result !== 'string') {
+          throw new Error('Settings file is not valid text')
+        }
         const settings = JSON.parse(reader.result)
         const video = videoRef.current
         if (video && (video.videoWidth || videoMeta.width)) {

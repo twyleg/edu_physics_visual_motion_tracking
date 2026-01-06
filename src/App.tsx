@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { supportedLanguages, translate } from './i18n'
+import { supportedLanguages, translate, type TranslateFn } from './i18n'
 import { useTracker } from './hooks/useTracker'
 import './App.css'
 
@@ -19,7 +19,7 @@ function App() {
   const [showBanner, setShowBanner] = useState(true)
   const [showCookieNotice, setShowCookieNotice] = useState(false)
 
-  const t = useCallback((key, params) => translate(lang, key, params), [lang])
+  const t: TranslateFn = useCallback((key, params) => translate(lang, key, params), [lang])
   const {
     videoRef,
     canvasRef,

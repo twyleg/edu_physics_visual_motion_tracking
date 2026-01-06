@@ -1,4 +1,7 @@
-const translations = {
+type TranslationValue = string | ((params: Record<string, any>) => string)
+type TranslationMap = Record<string, TranslationValue>
+
+const translations: Record<string, TranslationMap> = {
   en: {
     'language.label': 'Language',
     'language.de': 'German',
@@ -149,11 +152,13 @@ const translations = {
   },
 }
 
-const formatTemplate = (template, params = {}) =>
+const formatTemplate = (template: string, params: Record<string, any> = {}) =>
   template.replace(/\{(\w+)\}/g, (_, key) => (key in params ? params[key] : ''))
 
-export const translate = (lang, key, params) => {
-  const entry = translations[lang]?.[key] ?? translations.en[key] ?? key
+export type TranslateFn = (key: string, params?: Record<string, any>) => string
+
+export const translate = (lang: string, key: string, params?: Record<string, any>) => {
+  const entry = translations[lang]?.[key] ?? translations.en?.[key] ?? key
   if (typeof entry === 'function') return entry(params || {})
   if (typeof entry === 'string') return params ? formatTemplate(entry, params) : entry
   return key
