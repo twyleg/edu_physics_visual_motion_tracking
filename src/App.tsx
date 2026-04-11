@@ -37,7 +37,8 @@ function App() {
     handleManualMode,
     handleExitManualMode,
     handleDownloadSettings,
-    handleDownload,
+    handleDownloadCsv,
+    handleDownloadXlsx,
     results,
     currentTime,
     stepFrame,
@@ -198,8 +199,11 @@ function App() {
               <button className="secondary" type="button" onClick={handleDownloadSettings}>
                 {t('manual.downloadSettings')}
               </button>
-              <button className="secondary" type="button" onClick={handleDownload} disabled={!results.length}>
+              <button className="secondary" type="button" onClick={handleDownloadCsv} disabled={!results.length}>
                 {t('manual.downloadCsv')}
+              </button>
+              <button className="secondary" type="button" onClick={handleDownloadXlsx} disabled={!results.length}>
+                {t('manual.downloadXlsx')}
               </button>
             </div>
             {status === 'manual' && (

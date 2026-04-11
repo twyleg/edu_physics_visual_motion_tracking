@@ -723,10 +723,25 @@ export function useTracker(t: TranslateFn) {
     drawFrame()
   }
 
-  const handleDownload = () => {
-    if (!results.length) return
-    const header = `time_seconds,position_${unitLabel || 'units'}`
-    const lines = results.map((row) => {
+  const getExportRows = () =>
+    [...results].sort((left, right) => {
+      const leftTime = left.time ?? Number.POSITIVE_INFINITY
+      const rightTime = right.time ?? Number.POSITIVE_INFINITY
+      return leftTime - rightTime
+    })
+
+  const getExportHeaders = () => ['time_seconds', `position_${unitLabel || 'units'}`]
+
+  const getExportFilename = (extension) => {
+    const baseName = videoName ? videoName.replace(/\.[^.]+$/, '') : 'tracking'
+    return `${baseName}.${extension}`
+  }
+
+  const handleDownloadCsv = () => {
+    const exportRows = getExportRows()
+    if (!exportRows.length) return
+    const header = getExportHeaders().join(',')
+    const lines = exportRows.map((row) => {
       const time = row.time != null ? row.time.toFixed(4) : ''
       const position = row.position != null ? row.position.toFixed(5) : ''
       return `${time},${position}`
@@ -734,11 +749,24 @@ export function useTracker(t: TranslateFn) {
     const blob = new Blob([header, '\n', lines.join('\n')], { type: 'text/csv' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `${videoName || 'tracking'}.csv`
+    link.download = getExportFilename('csv')
     document.body.appendChild(link)
     link.click()
     link.remove()
     URL.revokeObjectURL(link.href)
+  }
+
+  const handleDownloadXlsx = async () => {
+    const exportRows = getExportRows()
+    if (!exportRows.length) return
+    const XLSX = await import('xlsx')
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      getExportHeaders(),
+      ...exportRows.map((row) => [row.time ?? null, row.position ?? null]),
+    ])
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Tracking Data')
+    XLSX.writeFileXLSX(workbook, getExportFilename('xlsx'))
   }
 
   const buildSettingsPayload = () => {
@@ -832,7 +860,8 @@ export function useTracker(t: TranslateFn) {
     handleManualMode,
     handleExitManualMode,
     handleDownloadSettings,
-    handleDownload,
+    handleDownloadCsv,
+    handleDownloadXlsx,
     results,
     currentTime,
     stepFrame,

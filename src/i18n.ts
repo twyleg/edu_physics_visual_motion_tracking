@@ -17,7 +17,7 @@ const translations: Record<string, TranslationMap> = {
     eyebrow: 'Visual Motion Tracker',
     'hero.title': 'Manually track a moving object along a straight line.',
     'hero.sub':
-      'Load a video, set the line, step through frames, and click the object to export time-position data as CSV.',
+      'Load a video, set the line, step through frames, and click the object to export time-position data as CSV or XLSX.',
     'overlay.prompt': 'Load a video to preview frames.',
     'video.title': '1. Video',
     'video.choose': 'Choose a video file',
@@ -36,6 +36,7 @@ const translations: Record<string, TranslationMap> = {
     'manual.exit': 'Exit manual mode',
     'manual.downloadSettings': 'Download settings',
     'manual.downloadCsv': 'Download CSV',
+    'manual.downloadXlsx': 'Download XLSX',
     'manual.prevFrame': 'Previous frame',
     'manual.nextFrame': 'Next frame',
     'manual.time': ({ time }) => `Time: ${time} s`,
@@ -91,7 +92,7 @@ const translations: Record<string, TranslationMap> = {
     eyebrow: 'Visueller Bewegungstracker',
     'hero.title': 'Verfolge ein bewegtes Objekt manuell entlang einer Geraden.',
     'hero.sub':
-      'Video laden, Linie setzen, durch Frames springen und das Objekt anklicken, um Zeit-Positions-Daten als CSV zu exportieren.',
+      'Video laden, Linie setzen, durch Frames springen und das Objekt anklicken, um Zeit-Positions-Daten als CSV oder XLSX zu exportieren.',
     'overlay.prompt': 'Video laden, um Frames anzuzeigen.',
     'video.title': '1. Video',
     'video.choose': 'Videodatei wählen',
@@ -110,6 +111,7 @@ const translations: Record<string, TranslationMap> = {
     'manual.exit': 'Manuellen Modus beenden',
     'manual.downloadSettings': 'Settings herunterladen',
     'manual.downloadCsv': 'CSV exportieren',
+    'manual.downloadXlsx': 'XLSX exportieren',
     'manual.prevFrame': 'Vorheriger Frame',
     'manual.nextFrame': 'Nächster Frame',
     'manual.time': ({ time }) => `Zeit: ${time} s`,
